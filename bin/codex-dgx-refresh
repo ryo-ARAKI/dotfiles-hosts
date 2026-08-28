@@ -1,0 +1,120 @@
+#!/bin/sh
+set -eu
+
+model=gpt-oss:120b
+codex_dir=$HOME/.codex
+profile_path=$codex_dir/ollama-launch.config.toml
+catalog_path=$codex_dir/model.json
+
+for required_command in ollama codex python3 cmp
+do
+    if ! command -v "$required_command" >/dev/null 2>&1
+    then
+        printf 'codex-dgx-refresh: required command not found: %s\n' "$required_command" >&2
+        exit 127
+    fi
+done
+
+if ! ollama show "$model" >/dev/null 2>&1
+then
+    printf 'codex-dgx-refresh: Ollama model is not installed: %s\n' "$model" >&2
+    exit 1
+fi
+
+rollback_needed=1
+profile_existed=0
+catalog_existed=0
+mkdir -p "$codex_dir"
+backup_dir=$(mktemp -d "$codex_dir/.codex-dgx-refresh.XXXXXX")
+backup_profile=$backup_dir/ollama-launch.config.toml
+backup_catalog=$backup_dir/model.json
+
+if [ -e "$profile_path" ]
+then
+    cp -p "$profile_path" "$backup_profile"
+    profile_existed=1
+fi
+if [ -e "$catalog_path" ]
+then
+    cp -p "$catalog_path" "$backup_catalog"
+    catalog_existed=1
+fi
+
+cleanup()
+{
+    cleanup_status=$?
+    trap - 0 HUP INT TERM
+    set +e
+    if [ "$rollback_needed" -eq 1 ]
+    then
+        if [ "$profile_existed" -eq 1 ]
+        then
+            cp -p "$backup_profile" "$profile_path"
+        else
+            rm -f "$profile_path"
+        fi
+        if [ "$catalog_existed" -eq 1 ]
+        then
+            cp -p "$backup_catalog" "$catalog_path"
+        else
+            rm -f "$catalog_path"
+        fi
+    fi
+    rm -rf "$backup_dir"
+    exit "$cleanup_status"
+}
+
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+ollama launch codex --config --model "$model" --yes
+
+python3 - "$profile_path" "$catalog_path" "$model" <<'PY'
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+profile_path = Path(sys.argv[1])
+catalog_path = Path(sys.argv[2])
+model = sys.argv[3]
+
+with profile_path.open("rb") as profile_file:
+    profile = tomllib.load(profile_file)
+
+if profile.get("model") != model:
+    raise SystemExit(f"generated profile does not select {model}")
+
+provider_name = profile.get("model_provider")
+providers = profile.get("model_providers")
+if (
+    not isinstance(provider_name, str)
+    or not isinstance(providers, dict)
+    or not isinstance(providers.get(provider_name), dict)
+):
+    raise SystemExit("generated profile does not define its selected model provider")
+
+configured_catalog = profile.get("model_catalog_json")
+if configured_catalog is None or Path(configured_catalog).expanduser() != catalog_path:
+    raise SystemExit("generated profile does not reference ~/.codex/model.json")
+
+with catalog_path.open(encoding="utf-8") as catalog_file:
+    catalog = json.load(catalog_file)
+
+models = catalog.get("models")
+if not isinstance(models, list):
+    raise SystemExit("generated model catalog has no models list")
+if model not in [entry.get("slug") for entry in models if isinstance(entry, dict)]:
+    raise SystemExit(f"generated model catalog does not contain {model}")
+PY
+
+refresh_result=updated
+if [ "$profile_existed" -eq 1 ] && [ "$catalog_existed" -eq 1 ] && \
+    cmp -s "$backup_profile" "$profile_path" && cmp -s "$backup_catalog" "$catalog_path"
+then
+    refresh_result=unchanged
+fi
+rollback_needed=0
+printf 'codex-dgx-refresh: %s %s and %s for %s\n' "$refresh_result" "$profile_path" "$catalog_path" "$model"
