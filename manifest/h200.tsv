@@ -1,0 +1,1 @@
+config/apparmor/usr.bin.bwrap	/etc/apparmor.d/usr.bin.bwrap	0644	remote

@@ -1,0 +1,12 @@
+# Permit Codex's bubblewrap helper to create its own user namespace.
+#
+# Ubuntu's generic unprivileged_userns profile denies the capability setup
+# bubblewrap needs. This profile is intentionally limited to /usr/bin/bwrap.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile codex-bwrap /usr/bin/bwrap flags=(unconfined) {
+    userns,
+
+    include if exists <local/codex-bwrap>
+}
