@@ -1,3 +1,2 @@
 config/fish/conf.d/95-codex-dgx.fish	~/.config/fish/conf.d/95-codex-dgx.fish	0644	remote
 config/apparmor/usr.bin.bwrap	/etc/apparmor.d/usr.bin.bwrap	0644	remote
-bin/codex-dgx-refresh	~/.local/bin/codex-dgx-refresh	0755	remote
